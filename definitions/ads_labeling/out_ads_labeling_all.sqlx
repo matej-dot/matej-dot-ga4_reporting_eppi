@@ -1,0 +1,30 @@
+config {
+  type: "table",
+  schema: "ads_labeling_" + constants.company,
+  tags: ["labeling","out_table","table"]
+}
+
+
+ js {
+
+const unionStatements = [];
+
+  unionStatements.push(`
+    SELECT
+      *
+    FROM
+      ${ref("out_ads_labeling_time_all")}
+    WHERE
+      date = (select max(date) from ${ref("out_ads_labeling_time_all")})
+  `);
+
+
+
+const concatedQuery = unionStatements.join('\nUNION ALL\n');
+
+let finalQuery;
+if (concatedQuery == "") {finalQuery = `select current_date() as date, 'no data' as note`} else {finalQuery = concatedQuery}
+
+}
+
+${finalQuery}

@@ -1,0 +1,41 @@
+config {
+  type: "table",
+  schema: "ads_labeling_" + constants.company,
+  tags: ["labeling","out_table","table"],
+  bigquery: {
+      partitionBy: "date"
+  }
+}
+
+js {
+
+const { getAllVersions } = require('includes/constants');
+const version = getAllVersions();
+const { constant } = require('includes/constants');
+const unionStatements = [];
+
+version.forEach(version => {
+
+  const domain = constant(version, "DOMAIN");
+  const tableName = project_id + ".ads_labeling_" + domain + ".view_item_profit_" + domain;
+  const tableID = tableName.split(".")[2];
+  const isPublish = constant(version, "ADS_LABELING" );
+
+if(isPublish) {
+  unionStatements.push(`
+    SELECT
+      *
+    FROM
+      ${ref(tableID)}
+  `);
+  }
+});
+
+const concatedQuery = unionStatements.join('\nUNION ALL\n');
+
+let finalQuery;
+if (concatedQuery == "") {finalQuery = `select current_date() as date, 'no data' as note`} else {finalQuery = concatedQuery}
+
+}
+
+${finalQuery}

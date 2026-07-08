@@ -1,0 +1,204 @@
+config {
+  type: "table",
+  tags: ["table", "cohort", "out_table"],
+  schema: "ga_data_" + constants.company,
+  bigquery: {
+      partitionBy: "date"
+  }
+}
+
+js {
+  // Internal orders
+  const czOrders = "`gtm-ntxrpzps-ywm3z.input_data.cz_archive_orders_detail_*`"
+  const skOrders = "`gtm-ntxrpzps-ywm3z.input_data.sk_archive_orders_detail_*`"
+  const deOrders = "`gtm-ntxrpzps-ywm3z.input_data.de_archive_orders_detail_*`"
+
+  // Google Ads
+  const czAds = "gtm-ntxrpzps-ywm3z.gads_cz_4233861338.ads_ShoppingProductStats_4233861338"
+  const skAds = "gtm-ntxrpzps-ywm3z.gads_sk_7259076220.ads_ShoppingProductStats_7259076220"
+  const deAds = "gtm-ntxrpzps-ywm3z.gads_de_3837119790.ads_ShoppingProductStats_3837119790"
+
+  // General category
+  const categoryInfo = "`gtm-ntxrpzps-ywm3z.input_data.product_category_*`"
+
+  // Product feed
+  const productFeed = "`gtm-ntxrpzps-ywm3z.input_data.xml_google_cz_*`"
+}
+
+WITH
+product_name as (
+SELECT
+  id as product_id,
+  MAX(CASE 
+    WHEN IFNULL(sale_price,price) < 3000 THEN "1.(0 - 2999 Kč)"
+    WHEN IFNULL(sale_price,price) >= 3000 AND IFNULL(sale_price,price) < 8000 THEN "2.(3000 - 7999 Kč)"
+    WHEN IFNULL(sale_price,price) >= 8000 AND IFNULL(sale_price,price) < 15000 THEN "3.(8000 - 14999 Kč)"
+    WHEN IFNULL(sale_price,price) >= 15000 AND IFNULL(sale_price,price) < 20000 THEN "4.(15000 - 19999 Kč)"
+    WHEN IFNULL(sale_price,price) >= 20000 AND IFNULL(sale_price,price) < 25000 THEN "5.(20000 - 24999 Kč)"
+    WHEN IFNULL(sale_price,price) >= 25000 AND IFNULL(sale_price,price) < 30000 THEN "6.(25000 - 29999 Kč)"
+    ELSE "7.(30000+ Kč)"
+  END) AS price_range,
+  MAX(title) as product_name,
+  MAX(product_type) as product_type, 
+  MAX(material) as material, 
+  MAX(gender) as gender, 
+  MAX(color) as color,
+  MAX(custom_label_0) as custom_label_0, 
+  MAX(custom_label_1) as custom_label_1, 
+  MAX(custom_label_2) as custom_label_2, 
+  MAX(custom_label_3) as custom_label_3
+FROM 
+  ${productFeed}
+GROUP BY
+  1
+),
+
+orders_detail as (
+SELECT
+  "eppi_cz" as market,
+  date,
+  product_id,
+  COUNT(DISTINCT order_id) as transactions,
+  SUM(CAST(product_revenue as FLOAT64)) as product_revenue,
+  SUM(CAST(product_profit as FLOAT64)) as product_profit
+FROM 
+  ${czOrders}
+GROUP BY
+  1,2,3
+
+UNION ALL
+
+SELECT
+  "eppi_sk" as market,
+  date,
+  product_id,
+  COUNT(DISTINCT order_id) as transactions,
+  SUM(CAST(product_revenue as FLOAT64) * ${conversionRate("t1.date","EUR")}) as product_revenue,
+  SUM(CAST(product_profit as FLOAT64) * ${conversionRate("t1.date","EUR")}) as product_profit
+FROM 
+  ${skOrders} t1
+GROUP BY
+  1,2,3
+
+UNION ALL
+
+SELECT
+  "eppi_de" as market,
+  date,
+  product_id,
+  COUNT(DISTINCT order_id) as transactions,
+  SUM(CAST(product_revenue as FLOAT64) * ${conversionRate("t1.date","EUR")}) as product_revenue,
+  SUM(CAST(product_profit as FLOAT64) * ${conversionRate("t1.date","EUR")}) as product_profit
+FROM 
+  ${deOrders} t1
+GROUP BY
+  1,2,3
+),
+
+google_ads_metrics as (
+SELECT
+  "eppi_cz" as market,
+  segments_date AS date,
+  segments_product_item_id AS product_id,
+  SUM(metrics_impressions) as impressions,
+  SUM(metrics_clicks) as clicks,   
+  SUM(metrics_cost_micros) / 1000000 as cost
+FROM 
+  ${czAds}
+GROUP BY
+  1,2,3
+
+UNION ALL
+
+SELECT
+  "eppi_sk" as market,
+  segments_date AS date,
+  segments_product_item_id AS product_id,
+  SUM(metrics_impressions) as impressions,
+  SUM(metrics_clicks) as clicks,   
+  SUM(metrics_cost_micros * ${conversionRate("t1.segments_date","EUR")}) / 1000000 as cost
+FROM 
+  ${skAds} t1
+GROUP BY
+  1,2,3
+
+UNION ALL
+
+SELECT
+  "eppi_de" as market,
+  segments_date AS date,
+  segments_product_item_id AS product_id,
+  SUM(metrics_impressions) as impressions,
+  SUM(metrics_clicks) as clicks,   
+  SUM(metrics_cost_micros * ${conversionRate("t1.segments_date","EUR")}) / 1000000 as cost
+FROM 
+  ${deAds} t1
+GROUP BY
+  1,2,3
+),
+products_info as (
+SELECT DISTINCT
+  CAST(product_id as STRING) as product_id,
+  category_1,
+  category_2,
+  category_3
+FROM 
+  ${categoryInfo}
+),
+
+ads_metrics_merge as (
+SELECT
+  COALESCE(t1.market,t4.market) as market,
+  COALESCE(t1.date,t4.date) as date,
+  COALESCE(t1.product_id,t4.product_id) as product_id,
+  t1.transactions,
+  t1.product_revenue,
+  t1.product_profit,
+  t4.impressions,
+  t4.clicks,   
+  t4.cost
+FROM
+  orders_detail t1
+FULL OUTER JOIN
+  google_ads_metrics t4
+ON
+  t1.market = t4.market AND
+  t1.product_id = t4.product_id AND
+  t1.date = t4.date 
+)
+
+SELECT
+  t1.market as market,
+  t1.date as date,
+  t1.product_id as product_id,
+  t1.transactions,
+  t1.product_revenue,
+  t1.product_profit,
+  t2.price_range,
+  t2.product_name,
+  t2.product_type, 
+  t2.material, 
+  t2.gender, 
+  t2.color,
+  t2.custom_label_0, 
+  t2.custom_label_1, 
+  t2.custom_label_2, 
+  t2.custom_label_3,
+  COALESCE(t3.category_1,"Unavailable") as category_1,
+  COALESCE(t3.category_2,"Unavailable") as category_2,
+  COALESCE(t3.category_3,"Unavailable") as category_3,
+  t1.impressions,
+  t1.clicks,   
+  t1.cost
+FROM
+  ads_metrics_merge t1
+LEFT JOIN
+  product_name t2
+ON
+  t1.product_id = t2.product_id
+LEFT JOIN
+  products_info t3
+ON
+  t1.product_id = t3.product_id
+
+

@@ -1,0 +1,240 @@
+config {
+  type: "table",
+  tags: ["table", "cohort", "out_table"],
+  schema: "ga_data_" + constants.company
+}
+
+js {
+  const czOrders = "`gtm-ntxrpzps-ywm3z.input_data.cz_archive_orders_basic_*`"
+  const skOrders = "`gtm-ntxrpzps-ywm3z.input_data.sk_archive_orders_basic_*`"
+  const deOrders = "`gtm-ntxrpzps-ywm3z.input_data.de_archive_orders_basic_*`"
+  const costsAll = "`gtm-ntxrpzps-ywm3z.ga_data_eppi.out_ga4_campaign_split_all`"
+}
+
+WITH
+-- ============================================================
+-- Orders (normalized, multi-market)
+-- ============================================================
+orders AS (
+
+  -- CZ
+  SELECT
+    ID AS order_id,
+    NULLIF(LOWER(TRIM(Email)), '') AS customer_id,
+    Datum AS order_date,
+    'eppi_cz' AS market,
+
+    SAFE_CAST(
+      REPLACE(REPLACE(Trzba_bez_DPH, ' ', ''), ',', '.') AS FLOAT64
+    ) AS revenue,
+
+    SAFE_CAST(
+      REPLACE(REPLACE(Zisk, ' ', ''), ',', '.') AS FLOAT64
+    ) AS margin
+
+  FROM ${czOrders}
+  WHERE _TABLE_SUFFIX >= '20240101'
+
+  UNION ALL
+
+  -- SK
+  SELECT
+    ID AS order_id,
+    NULLIF(LOWER(TRIM(Email)), '') AS customer_id,
+    Datum AS order_date,
+    'eppi_sk' AS market,
+
+    SAFE_CAST(
+      REPLACE(REPLACE(Trzba_bez_DPH, ' ', ''), ',', '.') AS FLOAT64
+    ) * ${conversionRate("t1.Datum","EUR")} AS revenue,
+
+    SAFE_CAST(
+      REPLACE(REPLACE(Zisk, ' ', ''), ',', '.') AS FLOAT64
+    ) * ${conversionRate("t1.Datum","EUR")} AS margin
+
+  FROM ${skOrders} t1
+  WHERE _TABLE_SUFFIX >= '20240101'
+
+  UNION ALL
+
+  -- DE
+  SELECT
+    ID AS order_id,
+    NULLIF(LOWER(TRIM(Email)), '') AS customer_id,
+    Datum AS order_date,
+    'eppi_de' AS market,
+
+    SAFE_CAST(
+      REPLACE(REPLACE(Trzba_bez_DPH, ' ', ''), ',', '.') AS FLOAT64
+    ) * ${conversionRate("t1.Datum","EUR")} AS revenue,
+
+    SAFE_CAST(
+      REPLACE(REPLACE(Zisk, ' ', ''), ',', '.') AS FLOAT64
+    ) * ${conversionRate("t1.Datum","EUR")} AS margin
+
+  FROM ${deOrders} t1
+  WHERE _TABLE_SUFFIX >= '20240101'
+),
+
+-- ============================================================
+-- Marketing costs (daily per market)
+-- ============================================================
+costs AS (
+  SELECT
+    date,
+    market,
+    SUM(cost_czk) AS cost
+  FROM ${costsAll}
+  GROUP BY 1,2
+),
+
+-- ============================================================
+-- New customers per cohort (derived from orders)
+-- ============================================================
+new_customers AS (
+  SELECT
+    market,
+    DATE_TRUNC(first_order_date, MONTH) AS cohort_month,
+    COUNT(DISTINCT customer_id) AS new_customers
+  FROM (
+    SELECT
+      customer_id,
+      market,
+      MIN(order_date) AS first_order_date
+    FROM orders
+    WHERE customer_id IS NOT NULL
+    GROUP BY customer_id, market
+  )
+  GROUP BY market, cohort_month
+),
+
+-- ============================================================
+-- CAC per market + cohort
+-- ============================================================
+cac_per_cohort AS (
+  SELECT
+    c.market,
+    DATE_TRUNC(c.date, MONTH) AS cohort_month,
+    SAFE_DIVIDE(SUM(c.cost), MAX(n.new_customers)) AS CAC
+  FROM costs c
+  LEFT JOIN new_customers n
+    ON c.market = n.market
+   AND DATE_TRUNC(c.date, MONTH) = n.cohort_month
+  GROUP BY 1,2
+),
+
+-- ============================================================
+-- 1) First order per customer per market = cohort
+-- ============================================================
+customer_first_order AS (
+  SELECT
+    customer_id,
+    market,
+    MIN(order_date) AS first_order_date,
+    DATE_TRUNC(MIN(order_date), MONTH) AS cohort_month
+  FROM orders
+  WHERE customer_id IS NOT NULL
+  GROUP BY customer_id, market
+),
+
+-- ============================================================
+-- 2) Orders enriched with cohort info
+-- ============================================================
+orders_enriched AS (
+  SELECT
+    o.customer_id,
+    o.market,
+    o.order_date,
+    o.revenue,
+    o.margin,
+    c.first_order_date,
+    c.cohort_month,
+    DATE_DIFF(o.order_date, c.first_order_date, DAY) AS days_since_first_order
+  FROM orders o
+  JOIN customer_first_order c
+    ON o.customer_id = c.customer_id
+   AND o.market = c.market
+),
+
+-- ============================================================
+-- 3) Aggregate per market + cohort
+-- ============================================================
+cohort_base AS (
+  SELECT
+    market,
+    cohort_month,
+
+    COUNT(DISTINCT customer_id) AS customers_in_cohort,
+    SUM(revenue) AS cohort_revenue,
+
+    -- LTV windows
+    SUM(IF(days_since_first_order <= 30,  revenue, 0)) AS revenue_30,
+    SUM(IF(days_since_first_order <= 90,  revenue, 0)) AS revenue_90,
+    SUM(IF(days_since_first_order <= 180, revenue, 0)) AS revenue_180,
+    SUM(IF(days_since_first_order <= 360, revenue, 0)) AS revenue_360,
+
+    -- Margin windows
+    SUM(IF(days_since_first_order <= 30,  margin, 0)) AS margin_30,
+    SUM(IF(days_since_first_order <= 90,  margin, 0)) AS margin_90,
+    SUM(IF(days_since_first_order <= 180, margin, 0)) AS margin_180,
+    SUM(IF(days_since_first_order <= 360, margin, 0)) AS margin_360
+
+  FROM orders_enriched
+  GROUP BY market, cohort_month
+)
+
+-- ============================================================
+-- 4) Final select
+-- ============================================================
+SELECT
+  b.market,
+  b.cohort_month,
+
+  ROW_NUMBER() OVER (PARTITION BY b.market ORDER BY b.cohort_month) AS cohort_sort_key,
+
+  DATE_DIFF(
+    b.cohort_month,
+    MIN(b.cohort_month) OVER (PARTITION BY b.market),
+    MONTH
+  ) AS month_index,
+
+  b.customers_in_cohort,
+  b.cohort_revenue,
+
+  -- LTV
+  SAFE_DIVIDE(b.revenue_30,  b.customers_in_cohort) AS LTV30,
+  SAFE_DIVIDE(b.revenue_90,  b.customers_in_cohort) AS LTV90,
+  SAFE_DIVIDE(b.revenue_180, b.customers_in_cohort) AS LTV180,
+  SAFE_DIVIDE(b.revenue_360, b.customers_in_cohort) AS LTV360,
+
+  -- Margin LTV
+  SAFE_DIVIDE(b.margin_30,  b.customers_in_cohort) AS margin_LTV30,
+  SAFE_DIVIDE(b.margin_90,  b.customers_in_cohort) AS margin_LTV90,
+  SAFE_DIVIDE(b.margin_180, b.customers_in_cohort) AS margin_LTV180,
+  SAFE_DIVIDE(b.margin_360, b.customers_in_cohort) AS margin_LTV360,
+
+  -- CAC
+  c.CAC,
+
+  -- Profit
+  SAFE_DIVIDE(b.margin_30,  b.customers_in_cohort) - c.CAC AS profit_LTV30,
+  SAFE_DIVIDE(b.margin_90,  b.customers_in_cohort) - c.CAC AS profit_LTV90,
+  SAFE_DIVIDE(b.margin_180, b.customers_in_cohort) - c.CAC AS profit_LTV180,
+  SAFE_DIVIDE(b.margin_360, b.customers_in_cohort) - c.CAC AS profit_LTV360,
+
+  -- PNO
+  SAFE_DIVIDE(c.CAC, SAFE_DIVIDE(b.revenue_30,  b.customers_in_cohort)) AS PNO_LTV30,
+  SAFE_DIVIDE(c.CAC, SAFE_DIVIDE(b.revenue_90,  b.customers_in_cohort)) AS PNO_LTV90,
+  SAFE_DIVIDE(c.CAC, SAFE_DIVIDE(b.revenue_180, b.customers_in_cohort)) AS PNO_LTV180,
+  SAFE_DIVIDE(c.CAC, SAFE_DIVIDE(b.revenue_360, b.customers_in_cohort)) AS PNO_LTV360,
+
+  -- Ratio
+  SAFE_DIVIDE(SAFE_DIVIDE(b.revenue_30,  b.customers_in_cohort), c.CAC) AS ratio_LTV30,
+  SAFE_DIVIDE(SAFE_DIVIDE(b.revenue_90,  b.customers_in_cohort), c.CAC) AS ratio_LTV90,
+  SAFE_DIVIDE(SAFE_DIVIDE(b.revenue_180, b.customers_in_cohort), c.CAC) AS ratio_LTV180,
+  SAFE_DIVIDE(SAFE_DIVIDE(b.revenue_360, b.customers_in_cohort), c.CAC) AS ratio_LTV360
+
+FROM cohort_base b
+LEFT JOIN cac_per_cohort c
+  ON b.market = c.market
+ AND b.cohort_month = c.cohort_month

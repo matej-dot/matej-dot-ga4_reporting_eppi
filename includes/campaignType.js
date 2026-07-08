@@ -1,0 +1,32 @@
+module.exports = (campaign) => {
+  return `
+CASE
+  WHEN REGEXP_CONTAINS(replace(${campaign}," ",""), "01-.*") THEN "Brand"
+  WHEN REGEXP_CONTAINS(replace(${campaign}," ",""), "02-.*") THEN "Search"
+  WHEN REGEXP_CONTAINS(replace(${campaign}," ",""), "04-.*") THEN "Remarketing"
+  WHEN REGEXP_CONTAINS(replace(${campaign}," ",""), "06-.*") THEN "Remarketing"
+  WHEN REGEXP_CONTAINS(replace(${campaign}," ",""), "07-.*") THEN "PLA"
+  WHEN REGEXP_CONTAINS(replace(${campaign}," ",""), "08-.*") THEN "DSA"
+  WHEN REGEXP_CONTAINS(replace(${campaign}," ",""), "30-.*") THEN "Akvizice"
+  WHEN REGEXP_CONTAINS(replace(${campaign}," ",""), "40-.*") THEN "Akvizice"
+  WHEN REGEXP_CONTAINS(replace(${campaign}," ",""), "90-.*") THEN "Video"
+  WHEN REGEXP_CONTAINS(${campaign}, "(?i).*rmkt.*") THEN "Remarketing"
+  WHEN REGEXP_CONTAINS(${campaign}, "(?i).*drtg.*") THEN "Remarketing"
+  WHEN REGEXP_CONTAINS(${campaign}, "(?i).*dsa.*") THEN "DSA"
+  WHEN REGEXP_CONTAINS(${campaign}, "(?i).*drem.*") THEN "Remarketing"
+  WHEN REGEXP_CONTAINS(${campaign}, "(?i).*remar.*") THEN "Remarketing"
+  WHEN REGEXP_CONTAINS(${campaign}, "(?i).*retarg.*") THEN "Remarketing"
+  WHEN REGEXP_CONTAINS(${campaign}, "(?i).*dynam.*") THEN "Remarketing"
+  WHEN REGEXP_CONTAINS(${campaign}, "(?i).*brand.*") THEN "Brand"
+  WHEN REGEXP_CONTAINS(${campaign}, "(?i).*pla.*") THEN "PLA"
+  WHEN REGEXP_CONTAINS(${campaign}, "(?i).*pmax.*")  THEN "PMax"
+  WHEN REGEXP_CONTAINS(${campaign}, "(?i).*max.*") THEN "PMax"
+  WHEN REGEXP_CONTAINS(${campaign}, "(?i).*akvi.*") THEN "Akvizice"
+  WHEN REGEXP_CONTAINS(${campaign}, "(?i).*sea.*") THEN "Search"
+  WHEN REGEXP_CONTAINS(${campaign}, "(?i).*vs_.*") THEN "Search"
+  WHEN REGEXP_CONTAINS(${campaign}, "(?i)VS.*") THEN "Search"
+  WHEN REGEXP_CONTAINS(${campaign}, "(?i).*zboží.cz.*") THEN "Zboží"
+  WHEN REGEXP_CONTAINS(${campaign}, "(?i).*zbozi.cz.*") THEN "Zboží"
+  ELSE "Ostatní"
+end`;
+}

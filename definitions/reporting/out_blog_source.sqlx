@@ -1,0 +1,132 @@
+config {
+  type: "table",
+  tags: ["table", "channel_split","out_table"],
+  schema: "ga_data_" + constants.company,
+  bigquery: {
+      partitionBy: "date",
+      clusterBy:["user_pseudo_id"]
+
+  }
+}
+
+js {
+
+const eventTable = "out_custom_events_all"
+
+
+}
+WITH
+prep as (
+SELECT 
+  user_pseudo_id,
+  event_name,
+  market,
+  date,
+  page,
+  blog_page_type,
+  blog_relevant_category,
+  page_referrer,
+  click_url,
+  device_category,
+  scroll_depth,
+  session_length_minutes
+FROM 
+  ${ref(eventTable)}
+WHERE
+  event_name = "purchase" OR
+  page LIKE "%magazin/%" OR
+  page LIKE "%blog/%" 
+
+),
+
+base as (
+SELECT 
+  user_pseudo_id,
+  event_name,
+  market,
+  date,
+  page,
+  page_referrer,
+  click_url,
+  device_category,
+  AVG(session_length_minutes) as session_length_minutes
+FROM 
+  prep
+WHERE
+  event_name != "purchase"
+GROUP BY
+  1,2,3,4,5,6,7,8
+),
+
+page_view as (
+SELECT
+  page,
+  MAX(blog_page_type) as blog_page_type,
+  MAX(blog_relevant_category) as blog_relevant_category
+FROM
+  prep
+GROUP BY
+  1
+),
+
+scrolls as (
+SELECT
+  date,
+  page,
+  AVG(scroll_depth) as scroll_depth,
+FROM
+  prep
+GROUP BY
+  1,2
+),
+
+purchasers as (
+SELECT DISTINCT
+  date,
+  user_pseudo_id
+FROM
+  prep
+WHERE
+  event_name = "purchase"
+)
+
+SELECT
+  t1.user_pseudo_id,
+  t4.user_pseudo_id as purchasers,
+  t1.event_name,
+  t1.market,
+  t1.date,
+  t1.page,
+  t1.page_referrer,
+  t1.click_url,
+  t1.device_category,
+  t2.blog_page_type,
+  t2.blog_relevant_category,
+  AVG(t3.scroll_depth) / 100 as scroll_depth,
+  AVG(t1.session_length_minutes) as session_length_minutes,
+FROM
+  base t1
+LEFT JOIN
+  page_view t2
+ON
+  t1.page = t2.page
+LEFT JOIN
+  scrolls t3
+ON
+  t1.date = t3.date AND
+  t1.page = t3.page
+LEFT JOIN
+  purchasers t4
+ON
+  t1.date = t4.date AND
+  t1.user_pseudo_id = t4.user_pseudo_id
+GROUP BY
+  1,2,3,4,5,6,7,8,9,10,11
+
+
+
+
+
+
+
+

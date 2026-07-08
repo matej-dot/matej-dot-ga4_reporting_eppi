@@ -1,0 +1,97 @@
+config {
+  type: "table",
+  schema: "ga_data_" + constants.company,
+  dependencies: ["out_ga4_date_split_all","out_forecast_all","out_data_quality_all","out_ga4_ecommerce_events_all","out_gcp_usage","out_ga4_product_performance","out_custom_events_all"],
+  tags: ["out_table","table"]
+}
+
+js {
+
+const { getAllVersions } = require('includes/constants');
+const version = getAllVersions();
+const { constant } = require('includes/constants');
+const unionStatements = [];
+
+version.forEach(version => {
+
+const domain = constant(version, "DOMAIN");
+const dataset = "analytics_" + constant(version, "GA4");
+
+
+  unionStatements.push(`
+
+SELECT
+ "${domain}" as version,
+ "Kontrola dat" as source, 
+ "Kontrola dat" AS table_id,
+ TIMESTAMP(DATETIME(CURRENT_TIMESTAMP(), 'Europe/Prague')) AS sources_updated
+
+UNION ALL
+
+SELECT
+ "${domain}" as version,
+ "Náklady" as source, 
+ "Náklady" AS table_id,
+ MAX(TIMESTAMP_ADD(TIMESTAMP_MILLIS(last_modified_time), INTERVAL 1 HOUR)) AS sources_updated
+FROM
+ \`${project_id}.ci_${domain}.__TABLES__\`
+WHERE
+  table_id like "ci_%" OR table_id like "sj_%"
+GROUP BY
+ 1,2,3
+
+UNION ALL
+
+SELECT
+ "${domain}" as version,
+ "Konektory" as source, 
+ CONCAT(
+    UPPER(SUBSTR(SPLIT(REPLACE(REPLACE(table_id, "ci_", ""), "sj_", ""), '_')[OFFSET(0)], 1, 1)),
+    SUBSTR(SPLIT(REPLACE(REPLACE(table_id, "ci_", ""), "sj_", ""), '_')[OFFSET(0)], 2)
+  ) AS table_id,
+ MAX(TIMESTAMP_ADD(TIMESTAMP_MILLIS(last_modified_time), INTERVAL 1 HOUR)) AS sources_updated
+FROM
+ \`${project_id}.ci_${domain}.__TABLES__\`
+WHERE
+  table_id like "ci_%" OR table_id like "sj_%"
+GROUP BY
+ 1,2,3
+
+UNION ALL
+
+SELECT
+ "${domain}" as version,
+ "Google Analytics" as source, 
+ SPLIT(table_id, '_')[OFFSET(0)] as table_id,
+ MAX(TIMESTAMP_ADD(TIMESTAMP_MILLIS(last_modified_time), INTERVAL 1 HOUR)) AS sources_updated
+FROM
+ \`${project_id}.${dataset}.__TABLES__\`
+WHERE
+  table_id not like "%intraday%" AND
+  table_id like "events%"
+GROUP BY
+ 1,2,3
+
+UNION ALL
+
+SELECT
+ "${domain}" as version,
+ "Internal data" as source, 
+ "Orders" as table_id,
+ MAX(TIMESTAMP_ADD(TIMESTAMP_MILLIS(last_modified_time), INTERVAL 1 HOUR)) AS sources_updated
+FROM
+ \`${project_id}.input_data.__TABLES__\`
+WHERE
+  table_id like "${version}_archive_orders_basic%"
+GROUP BY
+ 1,2,3
+  `);
+});
+const finalQuery = unionStatements.join('\nUNION ALL\n');
+}
+
+${finalQuery}
+
+post_operations {
+CREATE OR REPLACE TABLE `${project_id}.ga_data_${company}.dataform_lock` as SELECT false as run_lock
+}

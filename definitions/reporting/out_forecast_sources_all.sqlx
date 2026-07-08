@@ -1,0 +1,40 @@
+config {
+  type: "table",
+  tags: ["forecast","out_table","table"],
+  schema: "ga_data_" + constants.company
+}
+
+js {
+
+const { getAllVersions } = require('includes/constants');
+const version = getAllVersions();
+const { constant } = require('includes/constants');
+const unionStatements = [];
+
+version.forEach(version => {
+
+  const domain = constant(version, "DOMAIN");
+  const tableName = project_id + ".ga_data_staging_" + domain + ".view_forecast_sources_" + domain;
+  const tableID = tableName.split(".")[2];
+  const isPublish = true;
+
+if(isPublish) {
+  unionStatements.push(`
+    SELECT
+      *
+    FROM
+      ${ref(tableID)}
+  `);
+  }
+});
+
+const concatedQuery = unionStatements.join('\nUNION ALL\n');
+
+let finalQuery;
+if (concatedQuery == "") {finalQuery = `select current_date() as date, 'no data' as note`} else {finalQuery = concatedQuery}
+
+}
+
+${finalQuery}
+
+

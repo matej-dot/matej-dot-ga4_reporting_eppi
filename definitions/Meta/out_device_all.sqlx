@@ -1,0 +1,43 @@
+config {
+  type: "table",
+  tags: ["meta_api","out_table","table"],
+  schema: "meta_api",
+  bigquery: {
+      partitionBy: "date"
+  }
+}
+
+js {
+
+const { getAllVersions } = require('includes/constants');
+const version = getAllVersions();
+const { constant } = require('includes/constants');
+const unionStatements = [];
+
+version.forEach(version => {
+
+  const domain = constant(version, "DOMAIN");
+  const tableName = project_id + ".meta_api.view_device_" + domain;
+  const tableID = tableName.split(".")[2];
+  const isPublish = constant(version, "FBID") !== "";
+
+if(isPublish) {
+  unionStatements.push(`
+    SELECT
+      *
+    FROM
+      ${ref(tableID)}
+  `);
+  }
+});
+
+const concatedQuery = unionStatements.join('\nUNION ALL\n');
+
+let finalQuery;
+if (concatedQuery == "") {finalQuery = `select current_date() as date, 'no data' as note`} else {finalQuery = concatedQuery}
+
+}
+
+${finalQuery}
+
+

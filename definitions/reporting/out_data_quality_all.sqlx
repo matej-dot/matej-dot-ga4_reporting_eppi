@@ -1,0 +1,62 @@
+config {
+  type: "incremental",
+  tags: ["data_quality","out_table","incremental_table"],
+  schema: "ga_data_" + constants.company,
+  bigquery: {
+      partitionBy: "date"
+  }
+}
+
+js {
+
+const { getAllVersions } = require('includes/constants');
+const version = getAllVersions();
+const { constant } = require('includes/constants');
+const unionStatements = [];
+
+version.forEach(version => {
+
+  const domain = constant(version, "DOMAIN");
+  const tableName = project_id + ".ga_data_staging_" + domain + ".view_data_quality_" + domain;
+  const tableID = tableName.split(".")[2];
+  const isPublish = constant(version, tableID.split("_" + domain)[0].toUpperCase());
+
+if(isPublish) {
+  unionStatements.push(`
+    SELECT
+      *
+    FROM
+      ${ref(tableID)}
+  `);
+  }
+});
+
+const concatedQuery = unionStatements.join('\nUNION ALL\n');
+
+let finalQuery;
+if (concatedQuery == "") {finalQuery = `select current_date() as date, 'no data' as note`} else {finalQuery = concatedQuery}
+
+}
+
+pre_operations {
+  DECLARE atttributionWindow INT64 DEFAULT (${when(dataform.projectConfig.vars.force_load === "true", default_attribution_window + 10,default_attribution_window)});
+  DECLARE last_date DATE DEFAULT (
+    ${when(incremental(),
+    `DATE(DATE_SUB(CURRENT_DATE(), INTERVAL atttributionWindow DAY))`,
+    `SELECT DATE('2020-01-01')`
+    )}
+  );
+
+${when(incremental(), `DELETE FROM ${self()} WHERE date >= last_date`)}
+
+}
+
+WITH
+compiled_table as (
+${finalQuery}
+)
+SELECT
+  *
+FROM
+  compiled_table
+${when(incremental(), `WHERE date >= last_date`) }

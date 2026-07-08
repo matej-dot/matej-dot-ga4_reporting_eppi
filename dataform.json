@@ -1,0 +1,11 @@
+{
+  "defaultSchema": "dataform",
+  "assertionSchema": "dataform_assertions",
+  "warehouse": "bigquery",
+  "defaultDatabase": "test",
+  "defaultLocation": "EU",
+  "vars": {
+    "force_load": "false"
+}
+}
+   

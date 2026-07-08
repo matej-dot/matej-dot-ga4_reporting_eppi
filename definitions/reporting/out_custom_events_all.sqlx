@@ -1,0 +1,56 @@
+config {
+  type: "incremental",
+  tags: ["custom_events","out_table","incremental_table"],
+  schema: "ga_data_" + constants.company,
+  bigquery: {
+      partitionBy: "date"
+  }
+}
+
+js {
+
+const atttributionWindow = 30;
+
+const { getAllVersions } = require('includes/constants');
+const version = getAllVersions();
+const { constant } = require('includes/constants');
+const unionStatements = [];
+
+version.forEach(version => {
+
+  const domain = constant(version, "DOMAIN");
+  const tableName = project_id + ".ga_data_staging_" + domain + ".out_custom_events_" + domain;
+  const tableID = tableName.split(".")[2];
+  const isPublish = constant(version, tableID.split("_" + domain)[0].toUpperCase());
+
+if(isPublish) {
+  unionStatements.push(`
+    SELECT
+      *
+    FROM
+      ${ref(tableID)}
+      ${when(incremental(), `WHERE date >= DATE(DATE_SUB(CURRENT_DATE(), INTERVAL ${atttributionWindow} DAY))`) }
+  `);
+  }
+});
+
+const concatedQuery = unionStatements.join('\nUNION ALL\n');
+
+let finalQuery;
+if (concatedQuery == "") {finalQuery = `select current_date() as date, 'no data' as note`} else {finalQuery = concatedQuery}
+
+}
+
+pre_operations {
+${when(incremental(), `DELETE FROM ${self()} WHERE date >= DATE(DATE_SUB(CURRENT_DATE(), INTERVAL ${atttributionWindow} DAY));`)}
+}
+
+WITH
+compiled_table as (
+${finalQuery}
+)
+SELECT
+  *
+FROM
+  compiled_table
+

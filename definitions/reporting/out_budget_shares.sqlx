@@ -1,0 +1,85 @@
+config {
+  type: "table",
+  tags: ["table", "channel_split","out_table"],
+  schema: "ga_data_" + constants.company,
+  bigquery: {
+      partitionBy: "date"
+  }
+}
+
+js {
+
+const campaignSplit = "out_ga4_campaign_split_all"
+const budgetShares = "gtm-ntxrpzps-ywm3z.input_data.in_sheet_budget_shares"
+
+
+}
+
+WITH
+campaign_split as (
+SELECT
+  date,
+  market,
+  CASE
+    WHEN source LIKE "%facebook%" THEN "Meta"
+    WHEN source LIKE "%google%" THEN "Google Ads"
+    ELSE "Ostatní"
+  END as source,
+  campaign,
+  SUM(cost_czk) as cost
+FROM
+  ${ref(campaignSplit)}
+WHERE
+  (source = "facebook" OR source = "google") AND
+  cost_czk > 0
+GROUP BY
+  1,2,3,4
+),
+
+cost_budget as (
+SELECT
+  CONCAT("eppi_",LOWER(market)) as market,
+  source,
+  campaign,
+  SUM(share) as share
+FROM
+  ${budgetShares}
+GROUP BY
+  1,2,3
+)
+SELECT 
+  t1.date,
+  t1.market,
+  CASE
+    WHEN t1.source LIKE "%Meta%" THEN "meta"
+    WHEN t1.source LIKE "%Google%" THEN "google"
+    ELSE "Ostatní"
+  END as source,
+  t1.campaign,
+  t1.cost as spend,
+  t2.share as budget_share,
+  SAFE_DIVIDE(
+    t1.cost,
+    SUM(t1.cost) OVER (
+      PARTITION BY t1.date, t1.market, t1.source
+    )
+  ) AS spend_share
+FROM 
+  campaign_split t1
+LEFT JOIN 
+  cost_budget t2
+ON
+  t1.market = t2.market AND
+  t1.source = t2.source AND
+  t1.campaign LIKE t2.campaign
+
+
+
+
+
+
+
+
+
+
+

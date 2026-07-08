@@ -1,0 +1,50 @@
+config {
+  type: "table",
+  schema: "ads_labeling_" + constants.company,
+  tags: ["labeling","out_table","table"],
+  bigquery: {
+      partitionBy: "date"
+  }
+}
+
+js {
+
+const { getAllVersions } = require('includes/constants');
+const version = getAllVersions();
+const { constant } = require('includes/constants');
+const unionStatements = [];
+
+version.forEach(version => {
+
+const domain = constant(version, "DOMAIN");
+const market = constant(version, "DOMAIN").split("_")[1];
+const xmlTable = "`" + project_id + "." +constant(version, "PRODUCT_FEED") + "_*`";
+const dailyRates = "daily_rates_*";
+const currency = constant(version, "CURRENCY");
+const isPublish = constant(version, "ADS_LABELING" );
+
+    if(isPublish) {
+
+      unionStatements.push(`
+        SELECT
+          t1.date,
+          CAST(id as string) as id, 
+          CAST(title as string) as title,
+          CAST(price as float64) as price,
+          CAST(product_type as string) as product_type,
+          CAST(brand as string) as brand,
+          "${domain}" as project
+        FROM
+          ${xmlTable} t1
+      `);
+    }
+});
+
+const concatedQuery = unionStatements.join('\nUNION ALL\n');
+
+let finalQuery;
+if (concatedQuery == "") {finalQuery = `select current_date() as date, 'no data' as note`} else {finalQuery = concatedQuery}
+
+}
+
+${finalQuery}
