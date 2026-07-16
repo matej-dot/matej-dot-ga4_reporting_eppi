@@ -105,14 +105,16 @@ SELECT
   sessions.year_status
 FROM
   sessions
-FULL OUTER JOIN 
+FULL OUTER JOIN
   crm
 ON
   sessions.date = crm.date
-FULL OUTER JOIN 
+FULL OUTER JOIN
   costs
 ON
-  sessions.date = costs.date
+  -- COALESCE kľúč: keď GA4 export mešká (sessions ešte nemá deň), costs sa naviaže na crm.date
+  -- namiesto NULL — inak sa deň rozštiepi na 2 fragmenty (cost-only + crm-only riadok).
+  COALESCE(sessions.date, crm.date) = costs.date
 ),
 
 ext_labels AS (
