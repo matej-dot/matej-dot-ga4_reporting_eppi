@@ -42,7 +42,13 @@ if (concatedQuery == "") {finalQuery = `select current_date() as date, 'no data'
 }
 
 pre_operations {
-${when(incremental(), `DELETE FROM ${self()} WHERE date >= DATE(DATE_SUB(CURRENT_DATE(), INTERVAL ${atttributionWindow} DAY));`)}
+${when(incremental(), `BEGIN TRANSACTION;
+DELETE FROM ${self()} WHERE date >= DATE(DATE_SUB(CURRENT_DATE(), INTERVAL ${atttributionWindow} DAY));`)}
+}
+
+/* BigQuery transakcia: citatelia pocas prepoctu vidia povodne data, nie zmazany mesiac (13. 9. 2026) */
+post_operations {
+${when(incremental(), `COMMIT TRANSACTION;`)}
 }
 
 WITH

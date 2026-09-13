@@ -112,9 +112,12 @@ ON
 
   return ctx.incremental() ? `
     DECLARE attributionWindow INT64 DEFAULT (${windowSize});
+    BEGIN TRANSACTION;
     DELETE FROM ${ctx.self()}
     WHERE date >= DATE_SUB(CURRENT_DATE(), INTERVAL attributionWindow DAY);
   ` : ``;
 })
+// BigQuery transakcia: citatelia pocas prepoctu vidia povodne data, nie zmazany mesiac (13. 9. 2026)
+.postOps(ctx => ctx.incremental() ? `COMMIT TRANSACTION;` : ``)
 }
 });

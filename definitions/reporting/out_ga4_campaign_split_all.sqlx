@@ -37,7 +37,13 @@ const finalQuery = unionStatements.join('\nUNION ALL\n');
 
 pre_operations {
 DECLARE atttributionWindow INT64 DEFAULT (${when(dataform.projectConfig.vars.force_load === "true", default_attribution_window + 10,default_attribution_window)});
-${when(incremental(), `DELETE FROM ${self()} WHERE date >= DATE(DATE_SUB(CURRENT_DATE(), INTERVAL atttributionWindow DAY));`)}
+${when(incremental(), `BEGIN TRANSACTION;
+DELETE FROM ${self()} WHERE date >= DATE(DATE_SUB(CURRENT_DATE(), INTERVAL atttributionWindow DAY));`)}
+}
+
+/* BigQuery transakcia: citatelia pocas prepoctu vidia povodne data, nie zmazany mesiac (13. 9. 2026) */
+post_operations {
+${when(incremental(), `COMMIT TRANSACTION;`)}
 }
 
 WITH
