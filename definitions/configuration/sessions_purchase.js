@@ -65,7 +65,7 @@ publish(tableName + "_" + domain).query(
       LEFT JOIN
         ads t2
       ON
-        t1.gclid = t2.gclid
+        COALESCE(t1.gclid, REGEXP_EXTRACT(t1.landing_page.href, r'[?&]gclid=([^&#]+)')) = t2.gclid
       GROUP BY
         1,2,3,4
     ), 
