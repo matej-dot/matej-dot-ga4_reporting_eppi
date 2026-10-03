@@ -6,6 +6,10 @@ const { getAllVersions } = require('includes/constants');
 const { constant } = require('includes/constants');
 const version = getAllVersions();
 const ga4 = require("dataform-ga4-sessions");
+const { sourceMediumRules, processingSteps } = require('includes/sessionSource');
+
+// Posledný nepriamy zdroj sa hľadá toľkoto dní dozadu (predvolená hodnota balíka)
+const lastNonDirectLookBackDays = 30;
 
 version.forEach(version => {
 
@@ -16,7 +20,9 @@ version.forEach(version => {
     else 
         {atttributionWindow = default_attribution_window};
     const intradayTable = constant(version, "INTRADAY_TABLE");
-    const incrementalWhereStatement = "_TABLE_SUFFIX between format_date('%Y%m%d',date_sub(current_date(), interval " + atttributionWindow + " day)) and format_date('%Y%m%d',date_sub(current_date(), interval 1 day)) AND contains_substr(_TABLE_SUFFIX, 'intraday') is " + String(intradayTable);
+    // Eventy sa čítajú o lookback dlhšie než okno, ktoré sa prepisuje — inak relácia na jeho začiatku
+    // nemá odkiaľ zdediť posledný nepriamy zdroj.
+    const incrementalWhereStatement = "_TABLE_SUFFIX between format_date('%Y%m%d',date_sub(current_date(), interval " + (atttributionWindow + lastNonDirectLookBackDays) + " day)) and format_date('%Y%m%d',date_sub(current_date(), interval 1 day)) AND contains_substr(_TABLE_SUFFIX, 'intraday') is " + String(intradayTable);
     const nonIncrementalWhereStatement = "contains_substr(_TABLE_SUFFIX, 'intraday') is " + String(intradayTable);
     const updatePartitionFilterStatement = "date >= date_sub(current_date(), interval " + atttributionWindow + " day)"
   
@@ -49,6 +55,9 @@ version.forEach(version => {
         event.tags = [`${domain}`, "incremental_table"];
 
         event.LastNonDirectLookBackWindow = atttributionWindow;
+
+        event.sourceMediumRules = sourceMediumRules;
+        event.processingSteps = processingSteps(event.processingSteps, atttributionWindow);
 
         event.updatePartitionFilter = updatePartitionFilterStatement;
       
