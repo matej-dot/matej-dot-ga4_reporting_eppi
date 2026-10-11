@@ -19,6 +19,11 @@ version.forEach(version => {
   const ga4 = constant(version, "GA4");
   const currency = constant(version, "CURRENCY");
 
+  // Inkrementálny beh prepíše len okno posledných attributionWindow dní (viď preOps). Eventy mimo
+  // okna a archív sa vtedy nesmú vložiť znova — tabuľka inak rastie o celú históriu pri každom behu
+  // (do 3. 10. 2026 mala CZ 221 kópií).
+  const inWindow = ctx => ctx.incremental() ? ' AND date >= DATE_SUB(CURRENT_DATE(), INTERVAL attributionWindow DAY)' : '';
+
 // -------------------------------------- Input Tables -------------------------------------- //
 
   const outEvents = "`" + project_id + ".analytics_" + ga4 + ".out_events_" + domain + "`";
@@ -59,36 +64,38 @@ const ga4_date_query = `
   )
 `;
 
-const ga4SourceArchive =
-  constant(version, "GA4_ARCHIVE")
-    ? ga4_date_query
-    : `
+const sourcesOnly = `
       source_merging AS (
         SELECT * FROM sources
       )
     `;
 
+const ga4SourceArchive =
+  constant(version, "GA4_ARCHIVE")
+    ? ga4_date_query
+    : sourcesOnly;
+
 publish(tableName + "_" + domain).query(
   ctx => `
     WITH
     events_unioning as (
-    SELECT date, concat(user_pseudo_id,session_id) as session_id, "view_item" as event_name, item_id, item_name, item_category, null as quantity, null as item_revenue, null as item_revenue_czk, count(*) as event_count FROM (SELECT * FROM ${outEvents},UNNEST (items) WHERE event_name = "view_item" ) GROUP BY 1,2,3,4,5,6
+    SELECT date, concat(user_pseudo_id,session_id) as session_id, "view_item" as event_name, item_id, item_name, item_category, null as quantity, null as item_revenue, null as item_revenue_czk, count(*) as event_count FROM (SELECT * FROM ${outEvents},UNNEST (items) WHERE event_name = "view_item"${inWindow(ctx)} ) GROUP BY 1,2,3,4,5,6
 
       UNION ALL
 
-    SELECT date, concat(user_pseudo_id,session_id) as session_id, "add_to_cart" as event_name, item_id, item_name, item_category, null as quantity, null as item_revenue, null as item_revenue_czk, count(*) as event_count FROM (SELECT * FROM ${outEvents},UNNEST (items) WHERE event_name = "add_to_cart" ) GROUP BY 1,2,3,4,5,6
+    SELECT date, concat(user_pseudo_id,session_id) as session_id, "add_to_cart" as event_name, item_id, item_name, item_category, null as quantity, null as item_revenue, null as item_revenue_czk, count(*) as event_count FROM (SELECT * FROM ${outEvents},UNNEST (items) WHERE event_name = "add_to_cart"${inWindow(ctx)} ) GROUP BY 1,2,3,4,5,6
 
       UNION ALL   
 
-    SELECT date, concat(user_pseudo_id,session_id) as session_id, "remove_from_cart" as event_name, item_id, item_name, item_category, null as quantity, null as item_revenue, null as item_revenue_czk, count(*) as event_count FROM (SELECT * FROM ${outEvents},UNNEST (items) WHERE event_name = "remove_from_cart" ) GROUP BY 1,2,3,4,5,6
+    SELECT date, concat(user_pseudo_id,session_id) as session_id, "remove_from_cart" as event_name, item_id, item_name, item_category, null as quantity, null as item_revenue, null as item_revenue_czk, count(*) as event_count FROM (SELECT * FROM ${outEvents},UNNEST (items) WHERE event_name = "remove_from_cart"${inWindow(ctx)} ) GROUP BY 1,2,3,4,5,6
 
       UNION ALL 
 
-    SELECT date, concat(user_pseudo_id,session_id) as session_id, "begin_checkout" as event_name, item_id, item_name, item_category, null as quantity, null as item_revenue, null as item_revenue_czk, count(*) as event_count FROM (SELECT * FROM ${outEvents},UNNEST (items) WHERE event_name = "begin_checkout" ) GROUP BY 1,2,3,4,5,6
+    SELECT date, concat(user_pseudo_id,session_id) as session_id, "begin_checkout" as event_name, item_id, item_name, item_category, null as quantity, null as item_revenue, null as item_revenue_czk, count(*) as event_count FROM (SELECT * FROM ${outEvents},UNNEST (items) WHERE event_name = "begin_checkout"${inWindow(ctx)} ) GROUP BY 1,2,3,4,5,6
 
       UNION ALL 
 
-    SELECT date, concat(user_pseudo_id,session_id) as session_id, "view_cart" as event_name, item_id, item_name, item_category, null as quantity, null as item_revenue, null as item_revenue_czk, count(*) as event_count FROM (SELECT * FROM ${outEvents},UNNEST (items) WHERE event_name = "view_cart" ) GROUP BY 1,2,3,4,5,6
+    SELECT date, concat(user_pseudo_id,session_id) as session_id, "view_cart" as event_name, item_id, item_name, item_category, null as quantity, null as item_revenue, null as item_revenue_czk, count(*) as event_count FROM (SELECT * FROM ${outEvents},UNNEST (items) WHERE event_name = "view_cart"${inWindow(ctx)} ) GROUP BY 1,2,3,4,5,6
 
       UNION ALL 
 
@@ -104,7 +111,7 @@ publish(tableName + "_" + domain).query(
       SUM(t1.item_revenue * (1 / IFNULL(t2.rate,t3.rate))) as item_revenue_czk,
       count(*) as event_count
     FROM 
-      (SELECT * FROM ${outEvents} LEFT JOIN UNNEST (items) WHERE event_name = "purchase" ) t1
+      (SELECT * FROM ${outEvents} LEFT JOIN UNNEST (items) WHERE event_name = "purchase"${inWindow(ctx)} ) t1
     LEFT JOIN
       \`gtm-ntxrpzps-ywm3z.exchange_rates.daily_rates_*\` t2
     ON
@@ -160,7 +167,7 @@ publish(tableName + "_" + domain).query(
         1,2,3,4,5,6,7,8,9
     ),
 
-    ${ga4SourceArchive}
+    ${ctx.incremental() ? sourcesOnly : ga4SourceArchive}
 
     SELECT
         "${domain}" as market,
@@ -192,6 +199,20 @@ publish(tableName + "_" + domain).query(
 .schema("ga_data_staging_" + `${domain}`)
 .tags([`${domain}`,"incremental_table", "ecommerce_events",`analytics_${ga4}`])
 .dependencies(["out_events_" + `${domain}`,"out_purchase_" + `${domain}`])
+.preOps(ctx => {
+  const windowSize = dataform.projectConfig.vars.force_load === "true"
+    ? default_attribution_window + 10
+    : default_attribution_window;
+
+  return ctx.incremental() ? `
+    DECLARE attributionWindow INT64 DEFAULT (${windowSize});
+    BEGIN TRANSACTION;
+    DELETE FROM ${ctx.self()}
+    WHERE date >= DATE_SUB(CURRENT_DATE(), INTERVAL attributionWindow DAY);
+  ` : ``;
+})
+// BigQuery transakcia ako v custom_events.js: čitatelia počas prepočtu vidia pôvodné dáta
+.postOps(ctx => ctx.incremental() ? `COMMIT TRANSACTION;` : ``)
 
 ;
 }
