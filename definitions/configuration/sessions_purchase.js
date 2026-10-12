@@ -80,6 +80,10 @@ publish(tableName + "_" + domain).query(
       FROM
         ${ctx.ref(purchaseTable)} t1
       ${ordersExcluding}
+      -- Jedna objednavka = jeden nakup. out_purchase je unikatna po evente, nie po objednavke:
+      -- opakovany purchase event (znovunacitanie dakovacej stranky, 1-2/2025) aj zdvojeny riadok
+      -- z inkrementalneho behu by inak trzbu objednavky zapocitali viackrat. Berie sa prvy event.
+      QUALIFY ROW_NUMBER() OVER (PARTITION BY t1.transaction_id ORDER BY t1.event_timestamp, t1.date) = 1
     ),
 
     ga4_transactions as (

@@ -41,8 +41,15 @@ version.forEach(version => {
         { name: "event_params", columnName: "event_params" },
     ]);
     purchase.tags = [`${domain}`, "incremental_table"];
+    // Okno MERGE je o 2 dni sirsie nez citane shardy (5 dni): balik pocita `date` v case
+    // Europe/London, takze event tesne po polnoci (Praha) ma `date` o den skor nez jeho shard.
+    // S oknom 5 dni ho MERGE na hrane okna nenasiel a pri kazdom behu vlozil znova
+    // (nakupy 00:00-02:00 boli v tabulke 5-7x; zistene 12. 10. 2026).
     purchase.updatePartitionFilter =
-        "date >= date_sub(current_date(), interval 5 day)";
+        "date >= date_sub(current_date(), interval 7 day)";
+    // `date` v case GA4 property (vsetky tri trhy = Europe/Prague, overene na event_date 12. 10. 2026).
+    // Predvolene pasmo balika je Europe/London: eventy 00:00-01:00 mali `date` o den skor nez GA4 aj e-shop.
+    purchase.timezone = "Europe/Prague";
     purchase.publish();
 
 });

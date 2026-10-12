@@ -68,6 +68,9 @@ version.forEach(version => {
         event.addEventParams([{ name: "ga_session_number", type: "int" }]);
     
         // Publish session table
+        // `date` v case GA4 property (vsetky tri trhy = Europe/Prague, overene na event_date 12. 10. 2026).
+        // Predvolene pasmo balika je Europe/London: eventy 00:00-01:00 mali `date` o den skor nez GA4 aj e-shop.
+        event.timezone = "Europe/Prague";
         event.publish();
 
 }
