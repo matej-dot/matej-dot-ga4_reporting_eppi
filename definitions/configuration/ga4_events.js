@@ -41,8 +41,12 @@ version.forEach(version => {
         { name: "event_params", columnName: "event_params" },
     ]);
     event.tags = [`${domain}`, "incremental_table"];
+    // Okno MERGE je o 2 dni sirsie nez citane shardy (5 dni): balik pocita `date` v case
+    // Europe/London, takze event tesne po polnoci (Praha) ma `date` o den skor nez jeho shard.
+    // S oknom 5 dni ho MERGE na hrane okna nenasiel a pri kazdom behu vlozil znova
+    // (nakupy 00:00-02:00 boli v tabulke 5-7x; zistene 12. 10. 2026).
     event.updatePartitionFilter =
-        "date >= date_sub(current_date(), interval 5 day)";
+        "date >= date_sub(current_date(), interval 7 day)";
     event.publish();
 
 });
