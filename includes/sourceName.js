@@ -8,7 +8,7 @@ CASE
   WHEN REGEXP_CONTAINS(${sourceMedium}, "(?i).*google / cpc.*") AND NOT REGEXP_CONTAINS(${campaign}, "(?i).*organic.*") THEN "Google Ads"
   WHEN REGEXP_CONTAINS(${sourceMedium}, "(?i).*anonymized / anonymized.*") THEN "Anonymized"
   WHEN REGEXP_CONTAINS(${sourceMedium}, "(?i).*zbozi.cz.*") OR 
-    REGEXP_CONTAINS(${campaign}, "(?i).*zbo[zž][ií].*") THEN "Zboží.cz"
+    REGEXP_CONTAINS(${campaign}, "(?i)zbo[zž][ií][.]cz") THEN "Zboží.cz"
   WHEN REGEXP_CONTAINS(${campaign}, "(?i)^firmy.cz") THEN "Firmy.cz"
   WHEN REGEXP_CONTAINS(${sourceMedium}, "(?i).*seznam / cpc.*") OR 
     REGEXP_CONTAINS(${sourceMedium}, "(?i).*sklik / cpc.*") THEN "Sklik"
